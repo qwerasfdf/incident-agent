@@ -1,0 +1,7 @@
+﻿scenario,repeat,model,expected_type,type_ok,location_ok,correct,llm_only_correct,got_type,got_location,confidence,summary,seconds,tool_calls,llm_tool_calls,warnings,error
+S1,1,qwen2.5:3b,코드 결함,True,True,True,False,코드 결함,OrderService.recordAudit,높음,주문 생성 시스템이 오류를 일으키는 주요 원인은 OrderService의 recordAudit 메서드에서 메모리 누적 문제로 인해 발생한 자원 누수,150.1,1,0,위치를 코드 점검 결과 기준으로 보정 (보고한 위치는 결함 메서드를 호출하는 쪽): OrderService.create → OrderService.recordAudit,
+S2,1,qwen2.5:3b,코드 결함,True,True,True,True,코드 결함,order.OrderService.checkStockDirectly,높음,주문 생성 시 재고 확인 과정에서 커넥션 풀이 소진되어 오류가 발생하여 주문 생성이 중단됨,99.3,1,0,,
+S3,1,qwen2.5:3b,코드 결함,True,True,True,False,코드 결함,OrderService.searchSummaryLegacy,보통,주문 검색 API의 느린 응답은 OrderService.searchSummaryLegacy 메서드에서 반복문을 사용하여 데이터를 불러오는 방식으로 인해 발생했다.,170.4,1,0,위치를 코드 점검 결과 기준으로 보정 (보고한 위치는 결함 메서드를 호출하는 쪽): OrderService.searchSummary → OrderService.searchSummaryLegacy,
+S4,1,qwen2.5:3b,설정 오류,True,True,True,False,설정 오류,payment.external.base-url,보통,"결제 요청이 실패하는 원인은 외부 서비스 호출 시간 초과로 인한 것으로, 이는 결제 요청을 처리하는 메서드와 관련된 설정 변경으로 인해 발생한 것으로 판단된다.",149.5,2,0,"원인 유형을 조사 사실 기준으로 보정: 외부 시스템 → 설정 오류 (코드 결함 패턴 없음, 직전 설정 변경 있음, 외부 호출 시간 초과 없음)",
+S5,1,qwen2.5:3b,외부 시스템,True,True,True,True,외부 시스템,payment.PaymentClient.requestApproval,보통,결제 요청이 외부 서비스 호출 시간 초과로 실패하여 결제가 실패하는 장애가 발생했습니다.,89.5,2,0,,
+S6,1,qwen2.5:3b,코드 결함,True,True,True,True,코드 결함,OrderService.couponLabel(OrderService.java:50),보통,"주문 상세 조회 시, 주문의 쿠폰 코드가 null일 경우에 대한 null 처리가 부족하여 오류가 발생했습니다.",73.6,1,0,,

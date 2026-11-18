@@ -1,0 +1,54 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: order-service
+  datasource:
+    url: jdbc:h2:mem:orderdb;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    hikari:
+      pool-name: OrderHikariPool
+      maximum-pool-size: 10
+      connection-timeout: 3000   # 커넥션을 3초 안에 못 받으면 오류 (S2 재현용)
+  jpa:
+    hibernate:
+      ddl-auto: create
+    open-in-view: false
+    show-sql: false
+  h2:
+    console:
+      enabled: true
+
+app:
+  order:
+    zone-id: Asia/Seoul
+
+payment:
+  external:
+    base-url: http://localhost:${server.port}/mock-external
+    connect-timeout: 1s
+    read-timeout: 2s
+
+inventory:
+  external:
+    # 별도 프로세스로 띄우는 inventory-service (멀티 서비스 장애 전파 시나리오 M1/M2)
+    base-url: http://localhost:8082
+    connect-timeout: 1s
+    read-timeout: 2s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,loggers,threaddump,configprops
+  endpoint:
+    health:
+      show-details: always
+    configprops:
+      show-values: always
+
+logging:
+  file:
+    path: logs

@@ -1,0 +1,139 @@
+[
+  {
+    "id": "S1",
+    "title": "메모리 누수",
+    "root_cause_location": "OrderService.recordAudit",
+    "cause_type": "code",
+    "key_metrics": [
+      "jvm.memory.used"
+    ],
+    "key_log_patterns": [
+      "OutOfMemoryError"
+    ]
+  },
+  {
+    "id": "S2",
+    "title": "DB 커넥션 고갈",
+    "root_cause_location": "OrderService.checkStockDirectly",
+    "cause_type": "code",
+    "key_metrics": [
+      "hikaricp.connections.active",
+      "hikaricp.connections.timeout"
+    ],
+    "key_log_patterns": [
+      "Connection is not available"
+    ]
+  },
+  {
+    "id": "S3",
+    "title": "응답 지연",
+    "root_cause_location": "OrderService.searchSummaryLegacy",
+    "cause_type": "code",
+    "key_metrics": [
+      "http.server.requests"
+    ],
+    "key_log_patterns": [
+      "느린 요청 GET /api/orders/search"
+    ]
+  },
+  {
+    "id": "S4",
+    "title": "잘못된 설정값",
+    "root_cause_location": "payment.external.base-url",
+    "cause_type": "config",
+    "key_metrics": [
+      "configprops"
+    ],
+    "key_log_patterns": [
+      "HttpClientErrorException$NotFound",
+      "mock-externl"
+    ]
+  },
+  {
+    "id": "S5",
+    "title": "외부 API 타임아웃",
+    "root_cause_location": "external-pg",
+    "cause_type": "external",
+    "key_metrics": [
+      "http.server.requests"
+    ],
+    "key_log_patterns": [
+      "SocketTimeoutException: Read timed out"
+    ]
+  },
+  {
+    "id": "S6",
+    "title": "예외 처리 누락",
+    "root_cause_location": "OrderService.couponLabel",
+    "cause_type": "code",
+    "key_metrics": [],
+    "key_log_patterns": [
+      "NullPointerException",
+      "getCouponCode()"
+    ]
+  },
+  {
+    "id": "S7",
+    "title": "비동기 처리 오용(동기 대기)",
+    "root_cause_location": "OrderService.sendOrderNoticeBlocking",
+    "cause_type": "code",
+    "key_metrics": [
+      "http.server.requests"
+    ],
+    "key_log_patterns": [
+      "느린 요청 POST /api/orders"
+    ]
+  },
+  {
+    "id": "S8",
+    "title": "타임존 설정 오류",
+    "root_cause_location": "app.order.zone-id",
+    "cause_type": "config",
+    "key_metrics": [
+      "configprops"
+    ],
+    "key_log_patterns": [
+      "설정 갱신 적용 app.order.zone-id: Asia/Seoul -> UTC"
+    ]
+  },
+  {
+    "id": "S9",
+    "title": "캐시 미반영",
+    "root_cause_location": "OrderService.searchSummary",
+    "cause_type": "code",
+    "key_metrics": [],
+    "key_log_patterns": []
+  },
+  {
+    "id": "S10",
+    "title": "결제 예외 삼킴",
+    "root_cause_location": "PaymentService.pay",
+    "cause_type": "code",
+    "key_metrics": [],
+    "key_log_patterns": [
+      "결제 승인 처리 중 예외 발생"
+    ]
+  },
+  {
+    "id": "S11",
+    "title": "불필요한 재시도 폭주",
+    "root_cause_location": "PaymentService.pay",
+    "cause_type": "code",
+    "key_metrics": [
+      "http.server.requests"
+    ],
+    "key_log_patterns": [
+      "외부 결제 승인 요청"
+    ]
+  },
+  {
+    "id": "S12",
+    "title": "동시성 유실 업데이트",
+    "root_cause_location": "OrderService.decrementLimitedStock",
+    "cause_type": "code",
+    "key_metrics": [],
+    "key_log_patterns": [
+      "한정 수량 재고 차감"
+    ]
+  }
+]

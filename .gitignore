@@ -1,0 +1,12 @@
+build/
+.gradle/
+logs/
+*.log
+.idea/
+.vscode/
+*.iml
+out/
+__pycache__/
+*.pyc
+agent/results/
+.env
