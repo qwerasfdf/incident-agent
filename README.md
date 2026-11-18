@@ -133,6 +133,22 @@ cd order-service     & gradlew.bat bootRun      REM 주문 서비스 (재고 서
 py -3 -m streamlit run ui\app.py                REM 콘솔
 ```
 
+### Docker로 한 번에 실행
+
+JDK·Python·Ollama를 각각 설치하지 않고 Docker만 있으면 됩니다.
+
+```bash
+docker compose up --build
+```
+
+- `ollama`(모델 서버) → `ollama-init`(qwen2.5:3b 최초 1회 다운로드, 약 2GB) → `inventory-service`(8082) →
+  `order-service`(8081, 메모리 누수 시연용으로 힙 256MB 제한) → `agent-ui`(8501) 순으로 올라옵니다.
+- **최초 실행은 모델 다운로드 때문에 몇 분 걸립니다.** 이후에는 `ollama_data` 볼륨에 캐시되어 빠르게 재시작됩니다.
+- 다 뜨면 http://localhost:8501 에서 콘솔을 그대로 사용할 수 있습니다 (장애 재현·조사·평가 전부 동일).
+- Agent가 두 서비스의 로그 파일·자바 소스 코드를 직접 읽어 조사하는 구조라, `agent-ui` 컨테이너는 레포 전체를
+  `/workspace`에 그대로 마운트합니다 — 로컬에서 코드를 수정하면 컨테이너 재시작만으로 바로 반영됩니다.
+- 끌 때는 `docker compose down` (모델 캐시를 지우려면 `-v`까지 추가).
+
 ---
 
 ## 6. 콘솔 사용법 (http://localhost:8501)

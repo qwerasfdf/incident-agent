@@ -1,0 +1,12 @@
+.git
+order-service/.gradle
+order-service/build
+order-service/logs
+inventory-service/.gradle
+inventory-service/build
+inventory-service/logs
+agent/results
+agent/incident_agent/__pycache__
+ui/__pycache__
+scripts/__pycache__
+*.log

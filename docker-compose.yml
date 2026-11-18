@@ -1,0 +1,68 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # ollama 컨테이너가 떠 있는 동안 1회만 모델을 내려받는 init 컨테이너.
+  # ollama_data 볼륨에 저장되므로 docker compose down 후 다시 올려도 재다운로드하지 않는다.
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull qwen2.5:3b"]
+
+  inventory-service:
+    build: ./inventory-service
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./inventory-service/logs:/app/logs
+
+  order-service:
+    build: ./order-service
+    ports:
+      - "8081:8081"
+    environment:
+      - INVENTORY_BASE_URL=http://inventory-service:8082
+    volumes:
+      - ./order-service/logs:/app/logs
+    depends_on:
+      - inventory-service
+
+  agent-ui:
+    build:
+      context: .
+      dockerfile: ui/Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      - SERVICE_URL=http://order-service:8081
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - AGENT_MODEL=qwen2.5:3b
+      - INVENTORY_BASE_URL=http://inventory-service:8082
+    volumes:
+      # Agent가 order-service/inventory-service의 로그·자바 소스 코드를 직접 파일로
+      # 읽어서 조사하는 구조라, 레포 전체를 그대로 마운트해 둔다 (agent/incident_agent/config.py 참고).
+      - .:/workspace
+    working_dir: /workspace
+    depends_on:
+      order-service:
+        condition: service_started
+      inventory-service:
+        condition: service_started
+      ollama-init:
+        condition: service_completed_successfully
+
+volumes:
+  ollama_data:
