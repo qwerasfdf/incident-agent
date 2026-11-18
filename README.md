@@ -14,6 +14,7 @@ Spring Boot 마이크로서비스 환경에서 **장애를 스스로 조사하�
 
 | 장애 재현 & 결과 확인 | Agent 조사 과정 (실시간) | LLM 단독 vs 코드 보정 비교 |
 |---|---|---|
+| ![장애 재현 화면](docs/screenshots/01_error_reproduce.jpg) | ![Agent 조사 과정](docs/screenshots/02_agent_investigation.jpg) | ![LLM 단독 vs 코드 보정](docs/screenshots/03_llm_vs_corrected.jpg) |
 | 장애를 켠 뒤 요청을 보내면 콘솔에 증상이 바로 나타납니다 | 기초 조사 → 증거 수집 → (필요하면) 추가 조사 → 결론 | 작은 모델이 놓친 걸 코드가 보정하는 과정을 그대로 공개 |
 
 실행 화면은 아래 "콘솔 사용법"을, 평가 결과는 "7. 평가 결과"를 참고하세요.
