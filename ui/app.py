@@ -11,6 +11,7 @@
 """
 import html
 import json
+import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -182,8 +183,8 @@ hr.row {{ border:none; border-top:1px solid {LINE}; margin:4px 0; }}
 # ---------------------------------------------------------------- 사이드바
 with st.sidebar:
     st.markdown("**연결 설정**")
-    base = st.text_input("서비스 주소", value=st.session_state.get("base", "http://localhost:8081"), key="base")
-    inv_base = st.text_input("재고 서비스 주소", value=st.session_state.get("inv_base", "http://localhost:8082"),
+    base = st.text_input("서비스 주소", value=st.session_state.get("base", os.environ.get("SERVICE_URL", "http://localhost:8081")), key="base")
+    inv_base = st.text_input("재고 서비스 주소", value=st.session_state.get("inv_base", os.environ.get("INVENTORY_BASE_URL", "http://localhost:8082")),
                               key="inv_base")
     log_path = st.text_input("로그 파일", value=str(DEFAULT_LOG), key="log_path")
     auto = st.toggle("5초마다 새로고침", value=True)
