@@ -64,6 +64,16 @@ def expected_for(active_codes: list[str]) -> str | None:
     return SCENARIO_EXPECTED.get(active_codes[0])
 
 
+def multi_expected_for(active_codes: list[str]) -> list[str] | None:
+    """켜져 있는 시나리오가 2개 이상일 때, 그 시나리오들이 속한 원인 유형(cause_type)을
+    중복 없이 정렬해서 돌려준다 (복합 장애 채점용). 1개 이하면 None — 단일 채점(expected_for)
+    쪽이 이미 그 경우를 담당하므로 여기서는 건드리지 않는다."""
+    if len(active_codes) < 2:
+        return None
+    types = {SCENARIO_EXPECTED[c] for c in active_codes if c in SCENARIO_EXPECTED}
+    return sorted(types) if types else None
+
+
 def record(symptom: str, raw: dict, final: dict, active_codes: list[str], at: str,
            path: Path = DEFAULT_PATH) -> dict:
     """분석 1건을 채점해서 JSONL에 한 줄 추가하고, 그 줄(dict)을 반환한다."""
@@ -81,6 +91,16 @@ def record(symptom: str, raw: dict, final: dict, active_codes: list[str], at: st
         "final_correct": (final_ct == expected) if expected else None,
         "corrected": bool(raw) and raw != final,
     }
+    # 시나리오를 2개 이상 켜고 돌린 경우: 기존 단일 채점(expected/llm_correct/final_correct)은
+    # 그대로 None으로 둔 채(위 expected_for가 보류함), Agent가 찾아낸 원인 유형들의 집합이
+    # 실제로 켜져 있던 시나리오들의 원인 유형 집합을 전부 포함하는지만 별도로 기록한다.
+    multi_expected = multi_expected_for(active_codes)
+    if multi_expected:
+        final_types = sorted({t for t in ([final_ct] + [c.get("cause_type")
+                              for c in (final.get("additional_causes") or [])]) if t})
+        row["multi_expected"] = multi_expected
+        row["final_types"] = final_types
+        row["multi_correct"] = set(multi_expected) <= set(final_types)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -108,6 +128,11 @@ def summary(rows: list[dict]) -> dict:
     n = len(graded)
     llm_ok = sum(1 for r in graded if r.get("llm_correct"))
     final_ok = sum(1 for r in graded if r.get("final_correct"))
+    # 시나리오 2개 이상 켜고 돌린(=복합 장애) 기록은 별도로 집계한다 — 단일 채점(위)과는
+    # 완전히 분리되어 있어서, 단일 시나리오 정답률 수치는 이 집계의 영향을 받지 않는다.
+    multi_graded = [r for r in rows if r.get("multi_expected")]
+    mn = len(multi_graded)
+    multi_ok = sum(1 for r in multi_graded if r.get("multi_correct"))
     return {
         "total": len(rows),
         "graded": n,
@@ -115,4 +140,7 @@ def summary(rows: list[dict]) -> dict:
         "final_ok": final_ok,
         "llm_rate": (llm_ok / n) if n else None,
         "final_rate": (final_ok / n) if n else None,
+        "multi_graded": mn,
+        "multi_ok": multi_ok,
+        "multi_rate": (multi_ok / mn) if mn else None,
     }

@@ -170,6 +170,17 @@ hr.row {{ border:none; border-top:1px solid {LINE}; margin:4px 0; }}
 .score .r .s {{ font-family:'IBM Plex Mono', Consolas, monospace; flex:none; width:28px; color:{INK}; }}
 .score .hint {{ color:{MUTED}; font-size:0.78rem; margin-top:10px; }}
 
+/* 복합 장애 — 추가로 발견된 원인 */
+.extra {{ margin-top:16px; border-top:1px dashed {LINE}; padding-top:12px; }}
+.extra h4 {{ font-size:0.85rem; color:{FAULT}; font-weight:700; margin:0 0 4px; }}
+.extra .hint {{ color:{MUTED}; font-size:0.78rem; margin-bottom:10px; }}
+.extra-cause {{ border:1px solid {LINE}; border-left:3px solid var(--c); border-radius:4px;
+  padding:8px 12px; margin-top:8px; background:{PANEL}; }}
+.extra-cause .head {{ display:flex; gap:8px; align-items:center; margin-bottom:4px; }}
+.extra-cause .type {{ color:var(--c); font-weight:700; font-size:0.85rem; }}
+.extra-cause .loc {{ color:{MUTED}; font-size:0.8rem; font-family:'IBM Plex Mono', Consolas, monospace; }}
+.extra-cause ul {{ margin:0; padding-left:18px; font-size:0.82rem; }}
+
 @media (max-width: 900px) {{
   .kpis {{ grid-template-columns: 1fr 1fr; }}
   .kpi:nth-child(2) {{ border-right:none; }}
@@ -938,6 +949,29 @@ def _compare_html(raw, final):
 </div>"""
 
 
+def _additional_causes_html(additional):
+    """복합 장애(시나리오 여러 개 동시 재현)로 추가로 확정된 원인들을 보여준다.
+    주 원인(위 head/summary/evidence)과는 별개로, 코드가 독립적으로 찾아 확정한 것만 여기 온다
+    (근거 없는 추측이 아님 — graph.py validate()의 코드 결함/설정 오류/외부 시스템 신호 재검증을 거침)."""
+    if not additional:
+        return ""
+    cards = []
+    for c in additional:
+        ev = "".join(f"<li>{esc(str(x))}</li>" for x in (c.get("evidence") or [])) or "<li>근거 없음</li>"
+        cards.append(f"""<div class='extra-cause' style='--c:{CAUSE_COLOR.get(c.get("cause_type"), MUTED)}'>
+  <div class='head'><span class='type'>{esc(c.get("cause_type", "기타"))}</span>
+    <span class='loc'>{esc(c.get("location", "-"))}</span></div>
+  <ul>{ev}</ul>
+</div>""")
+    return f"""
+<div class='extra'>
+  <h4>⚠ 함께 발견된 다른 원인 ({len(additional)}개)</h4>
+  <div class='hint'>위 결론과 별개로, 조사 과정에서 확인된 추가 신호입니다. 시나리오를 2개 이상 켜둔
+    상태라면 실제로 원인이 여러 개일 수 있습니다.</div>
+  {''.join(cards)}
+</div>"""
+
+
 def report_html(res, symptom, at):
     r = res.get("report") or {}
     raw = res.get("raw_report") or {}
@@ -963,6 +997,7 @@ def report_html(res, symptom, at):
     <div><h4>지금 할 조치 {rb_badge}</h4><p>{esc(act)}</p></div>
     {fix_html}
   </div>
+  {_additional_causes_html(r.get("additional_causes"))}
   {_compare_html(raw, r)}
   {note_html}
   <div class='foot num'>{at} 분석 · 증상 “{esc(symptom)}” · 모델 {esc(str(res.get('model')))} ·
@@ -974,9 +1009,9 @@ def scoreboard_html(rows):
     """에러 재현 화면에서 '켜져 있던 시나리오가 정확히 1개'였던 분석들만 모아 LLM 단독 vs
     Agent 최종 정답률을 비교한다. (Agent 코드는 이 채점 결과를 전혀 보지 못한다 — scoreboard.py 참고)"""
     s = sb.summary(rows)
-    if not s["graded"]:
+    if not s["graded"] and not s.get("multi_graded"):
         return ("<div class='score'><div class='hint'>아직 채점 가능한 기록이 없습니다. "
-                "'에러 재현' 탭에서 시나리오를 하나만 켠 상태로 '원인 분석'을 돌리면 여기에 누적됩니다.</div></div>")
+                "'에러 재현' 탭에서 시나리오를 하나 이상 켠 상태로 '원인 분석'을 돌리면 여기에 누적됩니다.</div></div>")
 
     def card(label, ok, n, color):
         pct = round(100 * ok / n) if n else 0
@@ -987,18 +1022,33 @@ def scoreboard_html(rows):
 </div>"""
 
     recent = rows[:8]
+    def mark(r):
+        if r.get("multi_expected"):
+            return "✅" if r.get("multi_correct") else "❌"
+        return "✅" if r.get("final_correct") else ("❌" if r.get("expected") else "–")
     row_html = "".join(
-        f"<div class='r'><div class='c'>{'✅' if r.get('final_correct') else ('❌' if r.get('expected') else '–')}</div>"
+        f"<div class='r'><div class='c'>{mark(r)}</div>"
         f"<div class='s'>{esc(','.join(r.get('active_scenarios') or ['-']))}</div>"
-        f"<div>{esc(r.get('llm_cause_type') or '-')} → {esc(r.get('final_cause_type') or '-')}</div>"
+        f"<div>{esc(r.get('llm_cause_type') or '-')} → {esc(r.get('final_cause_type') or '-')}"
+        f"{esc(' + ' + ', '.join(r['final_types']) if r.get('final_types') and len(r['final_types']) > 1 else '')}</div>"
         f"<div style='margin-left:auto;opacity:0.8'>{esc(r.get('at',''))}</div></div>"
         for r in recent)
+    multi_card = ""
+    if s.get("multi_graded"):
+        multi_card = f"""
+  <div class='pair' style='margin-top:14px'>
+    {card("복합 장애(2개 이상) 적중률", s["multi_ok"], s["multi_graded"], "#7A5AF8")}
+    <div class='hint' style='align-self:center'>시나리오를 2개 이상 동시에 켜고 돌린 분석 중,
+      Agent가 찾아낸 원인 유형들이 실제로 켜져 있던 시나리오들의 원인 유형을 전부 포함했는지 봅니다
+      (구체적인 시나리오 번호가 아니라 코드 결함/설정 오류/외부 시스템 범주 기준).</div>
+  </div>"""
     return f"""
 <div class='score'>
   <div class='pair'>
     {card("LLM 단독 정답률", s["llm_ok"], s["graded"], FAULT)}
     {card("Agent 최종 정답률", s["final_ok"], s["graded"], OK)}
   </div>
+  {multi_card}
   <div class='rows'>{row_html}</div>
   <div class='hint'>시나리오 1개만 켜둔 상태로 돌린 분석 {s["graded"]}건 기준 (전체 기록 {s["total"]}건 중) ·
     채점은 결론이 다 나온 뒤 /chaos 상태를 조회해 별도로 매기며, Agent는 이 결과를 보지 못합니다.</div>

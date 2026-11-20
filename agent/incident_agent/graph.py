@@ -24,6 +24,14 @@ from .tools import TOOL_SPECS, Tools, run_tool
 
 CAUSE_TYPES = ["코드 결함", "설정 오류", "외부 시스템", "기타"]
 
+EXT_FAILURE_MARKERS = ("timed out", "timeout", "connection refused", "connectexception", "refused",
+                       " 503", " 502", " 500 ", " 429", " 401", "too many requests", "rate limit",
+                       "parse", "parsing", "malformed", "unexpected character", "jsonparseexception",
+                       "deserializ", "jsonmappingexception", "httpmessagenotreadable",
+                       "mismatchedinput", "cannot construct",
+                       "서명", "signature", "unauthorized", "forbidden", "인증 실패")
+
+
 REPORT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -518,12 +526,6 @@ def build_graph(cfg: AgentConfig, emit: Callable[[dict], Any] = lambda e: None):
         f = state["facts"]
         defects_found = state.get("defects") or []
         cfg_change = next((o for o in f["observations"] if "직전" in o and "설정 변경" in o), None)
-        EXT_FAILURE_MARKERS = ("timed out", "timeout", "connection refused", "connectexception", "refused",
-                              " 503", " 502", " 500 ", " 429", " 401", "too many requests", "rate limit",
-                              "parse", "parsing", "malformed", "unexpected character", "jsonparseexception",
-                              "deserializ", "jsonmappingexception", "httpmessagenotreadable",
-                              "mismatchedinput", "cannot construct",
-                              "서명", "signature", "unauthorized", "forbidden", "인증 실패")
         ext_timeout = any(any(k in _j(g["sample"]).lower() for k in EXT_FAILURE_MARKERS)
                           and any("Client" in fr for fr in g["sample"].get("app_frames", []))
                           for g in f["signatures"] if g["level"] == "ERROR" and g.get("current", True))
@@ -681,6 +683,49 @@ def build_graph(cfg: AgentConfig, emit: Callable[[dict], Any] = lambda e: None):
                 step("think", f"다시 작성 완료 ({sec:.0f}초)")
             except Exception as ex:  # noqa: BLE001
                 warnings.append(f"보고서 재작성 실패: {ex}")
+        # ------------------------------------------------------------- 복합 장애(원인 여러 개) 탐지
+        # 위 보정은 증상 문장에서 뽑은 kind 하나에 대해 "가장 그럴듯한 원인 하나"만 확정한다.
+        # 시나리오를 2개 이상 동시에 켜서 서로 다른 신호(힙/DB 커넥션/응답 지연/직전 설정 변경/외부
+        # 호출 타임아웃)가 함께 관찰되면, 이미 조사 단계에서 모은 사실(state["defects"], cfg_change,
+        # ext_timeout) 안에 주 원인과 무관한 두 번째·세 번째 원인의 증거가 같이 들어있을 수 있다.
+        # 여기서는 그 증거를 주 원인과 "다른" kind에 대해서만 다시 검토해, 추가로 확정되는 것만
+        # report["additional_causes"]에 보탠다 — 주 원인(r)의 필드·기존 채점 방식은 전혀 바뀌지 않는다.
+        # (조사 단계 자체는 안 바꾸므로, 두 원인이 서로 다른 API·다른 시간대라 애초에 그 코드를
+        # 들여다보지 않았다면 여기서도 못 잡는다 — 알려진 한계.)
+        seen_causes = {(r.get("cause_type"), r.get("location"))}
+        candidate_kinds = list(_obs_kinds(f["observations"]))
+        if cfg_change:
+            candidate_kinds.append("__cfg__")
+        if ext_timeout:
+            candidate_kinds.append("__ext__")
+        additional_causes = []
+        for kind in candidate_kinds:
+            cause = None
+            if kind == "__cfg__":
+                import re as _re2
+                m2 = _re2.search(r"적용 ([\w.\-]+)", cfg_change)
+                cause = {"cause_type": "설정 오류", "location": (m2[1] if m2 else ""),
+                         "evidence": [cfg_change], "confidence": "보통"}
+            elif kind == "__ext__":
+                cause = {"cause_type": "외부 시스템", "location": "외부 결제 대행사(PG) API",
+                         "evidence": _ext_timeout_evidence(f), "confidence": "보통"}
+            else:
+                d = _best_defect(state["defects"], f["observations"], kind)
+                if d:
+                    ev = _matching_findings(d, kind) if d.get("findings") else list(d.get("findings") or [])
+                    cause = {"cause_type": "코드 결함", "location": d["method"], "evidence": ev,
+                             "confidence": "보통"}
+            if not cause or not cause.get("location"):
+                continue
+            key = (cause["cause_type"], cause["location"])
+            if key in seen_causes:
+                continue
+            seen_causes.add(key)
+            additional_causes.append(cause)
+        if additional_causes:
+            r["additional_causes"] = additional_causes
+            warnings.append(f"주 원인 외에 {len(additional_causes)}개의 추가 원인 신호를 함께 발견함 "
+                            "(복합 장애 가능성 — 여러 시나리오가 동시에 켜져 있을 수 있음)")
         step("done", "분석 완료", None, report=r, warnings=warnings)
         return {"report": r, "warnings": warnings, "raw_report": raw}
 
@@ -734,6 +779,35 @@ def _obs_kind(observations):
     if "느림" in t:
         return "slow"
     return None
+
+
+def _obs_kinds(observations):
+    """_obs_kind()와 같은 신호를 '단일 kind 하나'가 아니라 '관찰된 kind 전부(집합)'로 돌려준다.
+    복합 장애(시나리오 여러 개 동시 재현) 탐지에서, 증상 문장이 가리키는 kind 하나만 보지 않고
+    실제 수치(힙/DB 커넥션/응답 지연)에 동시에 나타난 다른 신호도 놓치지 않기 위해 쓴다."""
+    t = " ".join(observations)
+    kinds = set()
+    if "힙 메모리" in t:
+        kinds.add("memory")
+    if "DB 커넥션" in t:
+        kinds.add("connection")
+    if "느림" in t:
+        kinds.add("slow")
+    return kinds
+
+
+def _ext_timeout_evidence(f):
+    """ext_timeout 신호(외부 호출 실패 흔적)를 뒷받침하는 오류 샘플에서 근거 문장 한 줄을 뽑는다."""
+    for g in f["signatures"]:
+        if g["level"] != "ERROR" or not g.get("current", True):
+            continue
+        text = _j(g["sample"]).lower()
+        if (any(k in text for k in EXT_FAILURE_MARKERS)
+                and any("Client" in fr for fr in g["sample"].get("app_frames", []))):
+            msg = (g["sample"].get("message") or "").strip()
+            if msg:
+                return [msg[:120]]
+    return []
 
 
 def _best_defect(defects, observations, focus_kind=None):
