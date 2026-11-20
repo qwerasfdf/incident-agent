@@ -696,39 +696,46 @@ def build_graph(cfg: AgentConfig, emit: Callable[[dict], Any] = lambda e: None):
         # (조사 단계 자체는 안 바꾸므로, 두 원인이 서로 다른 API·다른 시간대라 애초에 그 코드를
         # 들여다보지 않았다면 여기서도 못 잡는다 — 알려진 한계.)
         seen_causes = {(r.get("cause_type"), r.get("location"))}
-        candidate_kinds = list(_obs_kinds(f["observations"]))
-        if cfg_change:
-            candidate_kinds.append("__cfg__")
-        if ext_timeout:
-            candidate_kinds.append("__ext__")
         additional_causes = []
-        for kind in candidate_kinds:
-            cause = None
-            if kind == "__cfg__":
-                import re as _re2
-                m2 = _re2.search(r"적용 ([\w.\-]+)", cfg_change)
-                cause = {"cause_type": "설정 오류", "location": (m2[1] if m2 else ""),
-                         "evidence": [cfg_change], "confidence": "보통"}
-            elif kind == "__ext__":
-                cause = {"cause_type": "외부 시스템", "location": "외부 결제 대행사(PG) API",
-                         "evidence": _ext_timeout_evidence(f), "confidence": "보통"}
-            else:
-                # 단일 원인 판단에 쓰는 state["defects"]뿐 아니라, 복합 탐지 전용으로 추가 읽은
-                # state["defects_multi"]도 같이 본다 (존재하면) — 이쪽은 LLM 컨텍스트에는 없던 거라
-                # 여기서만 추가 원인 후보로 쓰인다.
-                d = _best_defect((state["defects"] + state.get("defects_multi", [])),
-                                f["observations"], kind)
-                if d:
-                    ev = _matching_findings(d, kind) if d.get("findings") else list(d.get("findings") or [])
-                    cause = {"cause_type": "코드 결함", "location": d["method"], "evidence": ev,
-                             "confidence": "보통"}
+
+        def _add(cause):
             if not cause or not cause.get("location"):
-                continue
+                return
             key = (cause["cause_type"], cause["location"])
             if key in seen_causes:
-                continue
+                return
             seen_causes.add(key)
             additional_causes.append(cause)
+
+        # 코드 결함 — 힙/DB 커넥션 등 관찰된 kind별로 다시 확인 (기존 로직 그대로)
+        for kind in _obs_kinds(f["observations"]):
+            # 단일 원인 판단에 쓰는 state["defects"]뿐 아니라, 복합 탐지 전용으로 추가 읽은
+            # state["defects_multi"]도 같이 본다 (존재하면) — 이쪽은 LLM 컨텍스트에는 없던 거라
+            # 여기서만 추가 원인 후보로 쓰인다.
+            d = _best_defect((state["defects"] + state.get("defects_multi", [])),
+                            f["observations"], kind)
+            if d:
+                ev = _matching_findings(d, kind) if d.get("findings") else list(d.get("findings") or [])
+                _add({"cause_type": "코드 결함", "location": d["method"], "evidence": ev,
+                      "confidence": "보통"})
+
+        # 설정 오류 — 메인 cfg_change(증상 포커스·'현재' 필터 기준)에 더해, 복합 탐지 전용으로
+        # 필터 없이 전체 에러 그룹을 다시 훑은 후보도 같이 본다 (증상 포커스가 다른 원인 쪽으로
+        # 잡혀 있어서 '현재'가 아니라고 표시된 에러 그룹 앞의 설정 변경은 메인 cfg_change가 못 본다).
+        import re as _re2
+        cfg_obs_candidates = ([cfg_change] if cfg_change else []) + _cfg_change_candidates_for_multi(f)
+        for obs in dict.fromkeys(cfg_obs_candidates):  # 순서 유지하며 중복 메시지 제거
+            m2 = _re2.search(r"적용 ([\w.\-]+)", obs)
+            _add({"cause_type": "설정 오류", "location": (m2[1] if m2 else ""),
+                  "evidence": [obs], "confidence": "보통"})
+
+        # 외부 시스템 — 메인 ext_timeout(현재' 필터 기준) 또는 복합 탐지 전용(필터 없음) 중
+        # 하나라도 신호가 있으면 후보로 본다.
+        if ext_timeout or _ext_timeout_any(f):
+            ev = _ext_timeout_evidence(f) or _ext_timeout_evidence_any(f)
+            _add({"cause_type": "외부 시스템", "location": "외부 결제 대행사(PG) API",
+                  "evidence": ev, "confidence": "보통"})
+
         if additional_causes:
             r["additional_causes"] = additional_causes
             warnings.append(f"주 원인 외에 {len(additional_causes)}개의 추가 원인 신호를 함께 발견함 "
@@ -842,6 +849,62 @@ def _ext_timeout_evidence(f):
             if msg:
                 return [msg[:120]]
     return []
+
+
+# --------------------------------------------------------------------------- 복합 장애 탐지 전용 (현재' 필터 무시)
+# cfg_change/ext_timeout(위)과 _ext_timeout_evidence는 모두 mark_current()가 '현재'로 표시한 오류
+# (증상 포커스와 관련 있거나 90초 이내)만 본다. 증상 포커스가 다른 원인(예: 메모리) 쪽으로 잡혀 있으면,
+# 그와 무관한 다른 에러 그룹(예: 오래된 설정 오류/외부 타임아웃) 앞의 신호는 '현재'가 아니라는 이유로
+# 통째로 안 보인다 — _extra_defects_for_multi가 "코드를 안 읽어서" 놓치는 것과 같은 종류의 문제를
+# cfg_change/ext_timeout 쪽에도 그대로 겪는다. 아래 두 함수는 '현재' 여부·증상 포커스와 무관하게
+# 전체 에러 그룹을 다시 훑어 신호를 찾되, 결과는 state["observations"]/LLM 컨텍스트에는 전혀 넣지
+# 않고 validate()의 복합 원인 후보로만 쓴다 — 주 원인 판단 로직(cfg_change/ext_timeout 그 자체)은
+# 그대로 두므로 단일 시나리오 판단에는 영향이 없다.
+def _ext_timeout_any(f):
+    """ext_timeout 신호를 '현재' 필터 없이 전체 ERROR 그룹에서 다시 확인한다 (복합 탐지 전용)."""
+    return any(any(k in _j(g["sample"]).lower() for k in EXT_FAILURE_MARKERS)
+               and any("Client" in fr for fr in g["sample"].get("app_frames", []))
+               for g in f["signatures"] if g["level"] == "ERROR")
+
+
+def _ext_timeout_evidence_any(f):
+    """_ext_timeout_evidence와 동일하나 '현재' 필터가 없다 (복합 탐지 전용)."""
+    for g in f["signatures"]:
+        if g["level"] != "ERROR":
+            continue
+        text = _j(g["sample"]).lower()
+        if (any(k in text for k in EXT_FAILURE_MARKERS)
+                and any("Client" in fr for fr in g["sample"].get("app_frames", []))):
+            msg = (g["sample"].get("message") or "").strip()
+            if msg:
+                return [msg[:120]]
+    return []
+
+
+def _cfg_change_candidates_for_multi(f):
+    """observe()의 cfg_change 판정과 같은 매칭(설정 변경 메시지 ↔ 오류 내용)을, '현재'·증상 포커스
+    필터 없이 에러 그룹(레벨 ERROR/WARN) 하나하나에 대해 다시 해본다. 증상 포커스와 안 맞아서
+    '현재'로 안 잡힌 다른 에러 그룹 앞의 설정 변경도 여기서는 후보로 잡힌다 (복합 탐지 전용)."""
+    out = []
+    if not f["config_changes"]:
+        return out
+    window_sec = min(300, f["window_min"] * 60)
+    seen_msgs = set()
+    for g in f["signatures"]:
+        if g["level"] not in ("ERROR", "WARN"):
+            continue
+        err_text = _err_content_text(g["sample"])
+        first_err = g["first"]
+        before = [c for c in f["config_changes"] if c["time"] <= first_err
+                  and _secs_between(c["time"], first_err) <= window_sec
+                  and _config_related(c["message"], err_text,
+                                      strict=_secs_between(c["time"], first_err) > 90)]
+        if before:
+            c = before[-1]
+            if c["message"] not in seen_msgs:
+                seen_msgs.add(c["message"])
+                out.append(f"첫 오류({first_err}) 직전 {c['time']}에 관련 설정 변경이 있었음: {c['message']}")
+    return out
 
 
 def _best_defect(defects, observations, focus_kind=None):
