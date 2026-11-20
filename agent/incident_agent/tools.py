@@ -233,7 +233,7 @@ class Tools:
         s = re.sub(r"\d+", "#", s)
         return s[:150]
 
-    def error_signatures(self) -> list[dict]:
+    def _grouped_errors(self) -> list[dict]:
         groups = {}
         for e in self._entries():
             if e["level"] not in ("WARN", "ERROR"):
@@ -248,7 +248,20 @@ class Tools:
         for g in sorted(groups.values(), key=lambda g: (g["level"] != "ERROR", -g["last"].timestamp())):
             out.append({"level": g["level"], "count": g["count"], "first": g["first"].strftime("%H:%M:%S"),
                         "last": g["last"].strftime("%H:%M:%S"), "sample": g["sample"]})
-        return out[:6]
+        return out
+
+    def error_signatures(self) -> list[dict]:
+        return self._grouped_errors()[:6]
+
+    def error_signatures_multi(self, limit: int = 20) -> list[dict]:
+        """복합 장애(시나리오 여러 개 동시) 탐지 전용 — error_signatures()는 LLM 컨텍스트 크기를
+        제한하려고 최근 6개 그룹만 돌려주는데, 그 중 한 시나리오(예: 메모리 누수)가 15분 넘게 계속
+        돌면서 새 에러 그룹을 계속 만들어내면, 훨씬 먼저 한 번 일어난 다른 시나리오(예: 설정 오류)의
+        에러 그룹이 "최근 6개" 밖으로 완전히 밀려나 사라져 버린다 — graph.py 쪽에서 '현재' 필터를
+        아무리 느슨하게 풀어도 이 데이터 자체가 없으면 못 잡는다. 이 메서드는 더 넓은 범위(기본
+        20개)를 돌려주되, error_signatures()의 반환값·LLM이 보는 메인 컨텍스트는 그대로 둔다.
+        """
+        return self._grouped_errors()[:limit]
 
     def config_changes(self) -> list[dict]:
         return [{"time": e["ts"].strftime("%H:%M:%S"), "message": e["msg"]}

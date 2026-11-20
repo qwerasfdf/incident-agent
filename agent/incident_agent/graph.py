@@ -367,6 +367,10 @@ def build_graph(cfg: AgentConfig, emit: Callable[[dict], Any] = lambda e: None):
         f = {"status": tools.get_status(), "requests": tools.get_request_stats(),
              "signatures": tools.error_signatures(), "config_changes": tools.config_changes(),
              "window_min": cfg.log_window_min, "focus": symptom_focus(state.get("symptom", ""))}
+        # 복합 장애 탐지 전용(더 넓은 에러 그룹) — error_signatures()가 최근 6개로 자르면서
+        # 밀려날 수 있는 다른 시나리오의 에러 그룹까지 보려는 목적. f["signatures"](메인, 6개 제한)나
+        # 아래 mark_current/observe/build_context에는 전혀 쓰이지 않으므로 LLM 컨텍스트는 그대로다.
+        f["signatures_multi"] = tools.error_signatures_multi()
         now = datetime.now()
         mark_current(f, f["focus"], now)
         f["observations"] = observe(f, f["focus"], now)
@@ -861,15 +865,18 @@ def _ext_timeout_evidence(f):
 # 않고 validate()의 복합 원인 후보로만 쓴다 — 주 원인 판단 로직(cfg_change/ext_timeout 그 자체)은
 # 그대로 두므로 단일 시나리오 판단에는 영향이 없다.
 def _ext_timeout_any(f):
-    """ext_timeout 신호를 '현재' 필터 없이 전체 ERROR 그룹에서 다시 확인한다 (복합 탐지 전용)."""
+    """ext_timeout 신호를 '현재' 필터 없이, 또한 error_signatures()의 '최근 6개' 제한도 없이
+    (signatures_multi가 있으면 그쪽을) 다시 확인한다 (복합 탐지 전용)."""
+    sigs = f.get("signatures_multi") or f["signatures"]
     return any(any(k in _j(g["sample"]).lower() for k in EXT_FAILURE_MARKERS)
                and any("Client" in fr for fr in g["sample"].get("app_frames", []))
-               for g in f["signatures"] if g["level"] == "ERROR")
+               for g in sigs if g["level"] == "ERROR")
 
 
 def _ext_timeout_evidence_any(f):
-    """_ext_timeout_evidence와 동일하나 '현재' 필터가 없다 (복합 탐지 전용)."""
-    for g in f["signatures"]:
+    """_ext_timeout_evidence와 동일하나 '현재' 필터·"최근 6개" 제한이 없다 (복합 탐지 전용)."""
+    sigs = f.get("signatures_multi") or f["signatures"]
+    for g in sigs:
         if g["level"] != "ERROR":
             continue
         text = _j(g["sample"]).lower()
@@ -883,14 +890,17 @@ def _ext_timeout_evidence_any(f):
 
 def _cfg_change_candidates_for_multi(f):
     """observe()의 cfg_change 판정과 같은 매칭(설정 변경 메시지 ↔ 오류 내용)을, '현재'·증상 포커스
-    필터 없이 에러 그룹(레벨 ERROR/WARN) 하나하나에 대해 다시 해본다. 증상 포커스와 안 맞아서
-    '현재'로 안 잡힌 다른 에러 그룹 앞의 설정 변경도 여기서는 후보로 잡힌다 (복합 탐지 전용)."""
+    필터 없이, 또한 error_signatures()의 '최근 6개' 제한도 없이(signatures_multi가 있으면 그쪽을)
+    에러 그룹(레벨 ERROR/WARN) 하나하나에 대해 다시 해본다. 증상 포커스와 안 맞거나, 다른 시나리오가
+    오래 돌면서 새 에러 그룹을 많이 만들어내 "최근 6개" 밖으로 밀려난 에러 그룹 앞의 설정 변경도
+    여기서는 후보로 잡힌다 (복합 탐지 전용)."""
     out = []
     if not f["config_changes"]:
         return out
+    sigs = f.get("signatures_multi") or f["signatures"]
     window_sec = min(300, f["window_min"] * 60)
     seen_msgs = set()
-    for g in f["signatures"]:
+    for g in sigs:
         if g["level"] not in ("ERROR", "WARN"):
             continue
         err_text = _err_content_text(g["sample"])
