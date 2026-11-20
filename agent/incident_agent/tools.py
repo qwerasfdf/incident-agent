@@ -233,9 +233,9 @@ class Tools:
         s = re.sub(r"\d+", "#", s)
         return s[:150]
 
-    def _grouped_errors(self) -> list[dict]:
+    def _grouped_errors(self, minutes=None) -> list[dict]:
         groups = {}
-        for e in self._entries():
+        for e in self._entries(minutes=minutes):
             if e["level"] not in ("WARN", "ERROR"):
                 continue
             key = (e["level"], self._signature(e["msg"]))
@@ -253,15 +253,18 @@ class Tools:
     def error_signatures(self) -> list[dict]:
         return self._grouped_errors()[:6]
 
-    def error_signatures_multi(self, limit: int = 20) -> list[dict]:
-        """복합 장애(시나리오 여러 개 동시) 탐지 전용 — error_signatures()는 LLM 컨텍스트 크기를
-        제한하려고 최근 6개 그룹만 돌려주는데, 그 중 한 시나리오(예: 메모리 누수)가 15분 넘게 계속
-        돌면서 새 에러 그룹을 계속 만들어내면, 훨씬 먼저 한 번 일어난 다른 시나리오(예: 설정 오류)의
-        에러 그룹이 "최근 6개" 밖으로 완전히 밀려나 사라져 버린다 — graph.py 쪽에서 '현재' 필터를
-        아무리 느슨하게 풀어도 이 데이터 자체가 없으면 못 잡는다. 이 메서드는 더 넓은 범위(기본
-        20개)를 돌려주되, error_signatures()의 반환값·LLM이 보는 메인 컨텍스트는 그대로 둔다.
+    def error_signatures_multi(self, limit: int = 20, minutes: int | None = None) -> list[dict]:
+        """복합 장애(시나리오 여러 개 동시) 탐지 전용 — error_signatures()는 두 가지로 범위를
+        좁힌다: (1) self._entries()의 기본 조회 범위가 log_window_min(기본 10분)이고, (2) 결과를
+        최근 6개 그룹으로 또 자른다. 두 시나리오를 같이 켜고, 한쪽(예: 메모리 누수)이 힙 수치를
+        올리려고 10분 넘게 켜져 있으면, 다른 쪽(예: 설정 오류)이 그보다 먼저 냈던 에러는 시간
+        범위 밖으로 빠지거나(①) 범위 안이라도 그 사이 쌓인 그룹 수에 밀려(②) 둘 다 놓칠 수
+        있다 — graph.py 쪽 '현재' 필터를 아무리 느슨하게 풀어도 데이터 자체가 없으면 못 잡는다.
+        그래서 이 메서드는 조회 시간 범위도 config_changes()와 같은 기준(최소 60분)으로 넓히고,
+        그룹 수 제한도 20개로 늘린다 — error_signatures()의 반환값(최근 10분·6개)과 LLM이 보는
+        메인 컨텍스트는 그대로 둔다.
         """
-        return self._grouped_errors()[:limit]
+        return self._grouped_errors(minutes=minutes or max(60, self.cfg.log_window_min))[:limit]
 
     def config_changes(self) -> list[dict]:
         return [{"time": e["ts"].strftime("%H:%M:%S"), "message": e["msg"]}
