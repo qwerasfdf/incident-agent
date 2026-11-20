@@ -13,6 +13,10 @@ class AgentConfig:
     service_url: str = os.environ.get("SERVICE_URL", "http://localhost:8081")
     ollama_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
     model: str = os.environ.get("AGENT_MODEL", "qwen2.5:3b")
+    # "ollama"(로컬) 또는 "claude"(Anthropic API)
+    provider: str = os.environ.get("AGENT_PROVIDER", "ollama")
+    anthropic_api_key: str = os.environ.get("ANTHROPIC_API_KEY", "")
+    anthropic_version: str = "2023-06-01"
     log_path: Path = Path(os.environ.get("SERVICE_LOG", ROOT / "order-service" / "logs" / "app.log"))
     source_dir: Path = Path(os.environ.get("SERVICE_SOURCE", ROOT / "order-service" / "src" / "main" / "java"))
     # 멀티 서비스 장애 전파 시나리오(M1/M2)용 — 재고 서비스(inventory-service)의 로그·소스도 함께 본다

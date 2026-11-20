@@ -194,6 +194,8 @@ docker compose up --build
 | 재고 서비스 주소 | http://localhost:8082 | `INVENTORY_URL` |
 | Ollama 주소 | http://localhost:11434 | `OLLAMA_BASE_URL` |
 | 모델 | qwen2.5:3b | `AGENT_MODEL` |
+| LLM provider | ollama | `AGENT_PROVIDER` (`ollama` 또는 `claude`) |
+| Claude API 키 | (없음) | `ANTHROPIC_API_KEY` |
 
 ---
 
@@ -216,7 +218,7 @@ docker compose up --build
 ## 9. 기술 스택
 
 - **Backend**: Spring Boot 3.5 / Java 17, H2 (in-memory), Spring Actuator
-- **Agent**: Python, LangGraph, Ollama (qwen2.5:3b)
+- **Agent**: Python, LangGraph, Ollama(qwen2.5:3b) 로컬 또는 Claude API — 콘솔 화면에서 전환 가능
 - **Console**: Streamlit
 - **평가**: 규칙 기반 자동 채점 (`scenarios/answer_key.json` 대조)
 

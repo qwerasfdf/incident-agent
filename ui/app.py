@@ -1017,16 +1017,30 @@ with tab_agent:
         o1, o2 = st.columns(2)
         window = o1.slider("로그 범위(분)", 1, 60, 5,
                            help="이전 에러 기록이 섞이지 않도록, 지금 에러가 시작된 시점을 포함하는 정도로 짧게 잡으세요.")
+        CLAUDE_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]
         with st.expander("모델 설정"):
-            ollama_url = st.text_input("Ollama 주소", value="http://localhost:11434")
-            models = ollama_models(ollama_url)
-            model = st.selectbox("모델", models or ["qwen2.5:3b"],
-                                 index=(models.index("qwen2.5:3b") if "qwen2.5:3b" in models else 0))
-        if not models:
+            use_claude = st.radio("LLM", ["Ollama (로컬)", "Claude API"], horizontal=True) == "Claude API"
+            if use_claude:
+                ollama_url, models = "", []
+                model = st.selectbox("Claude 모델", CLAUDE_MODELS)
+                claude_key = st.text_input(
+                    "Anthropic API 키", value=os.environ.get("ANTHROPIC_API_KEY", ""), type="password",
+                    help="api.anthropic.com으로 직접 호출합니다 (사내망에서 외부 HTTPS가 막혀 있으면 호출이 실패할 수 있습니다). "
+                         "키는 이 화면 세션에만 쓰이고 저장되지 않습니다.")
+            else:
+                claude_key = ""
+                ollama_url = st.text_input("Ollama 주소", value="http://localhost:11434")
+                models = ollama_models(ollama_url)
+                model = st.selectbox("모델", models or ["qwen2.5:3b"],
+                                     index=(models.index("qwen2.5:3b") if "qwen2.5:3b" in models else 0))
+        if not use_claude and not models:
             st.markdown(f"<div class='note'>Ollama({esc(ollama_url)})에 연결할 수 없습니다. Ollama를 실행한 뒤 새로고침하세요.</div>",
                         unsafe_allow_html=True)
+        if use_claude and not claude_key:
+            st.markdown("<div class='note'>Anthropic API 키를 입력하세요.</div>", unsafe_allow_html=True)
+        ready = (bool(claude_key) if use_claude else bool(models))
         run = st.button("원인 분석 시작", type="primary", use_container_width=True,
-                        disabled=not models or not symptom.strip())
+                        disabled=not ready or not symptom.strip())
         st.caption("CPU에서는 1~3분 걸립니다. 분석 중에는 다른 탭을 누르지 마세요.")
         steps_box = st.container()
 
@@ -1036,7 +1050,11 @@ with tab_agent:
 
     if run:
         cfg = AgentConfig()
-        cfg.service_url, cfg.ollama_url, cfg.model, cfg.log_window_min = base, ollama_url, model, window
+        cfg.service_url, cfg.log_window_min = base, window
+        if use_claude:
+            cfg.provider, cfg.model, cfg.anthropic_api_key = "claude", model, claude_key
+        else:
+            cfg.provider, cfg.ollama_url, cfg.model = "ollama", ollama_url, model
         cfg.log_path = Path(log_path)
         with steps_box:
             st.markdown("<div class='section'>조사 과정</div>", unsafe_allow_html=True)

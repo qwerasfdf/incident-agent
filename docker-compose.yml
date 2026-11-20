@@ -51,6 +51,9 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434
       - AGENT_MODEL=qwen2.5:3b
       - INVENTORY_BASE_URL=http://inventory-service:8082
+      # Claude API를 쓰려면 호스트에서 ANTHROPIC_API_KEY 환경변수를 설정해 두면 UI 입력칸에 자동으로 채워진다
+      # (설정 안 해도 Streamlit 화면에서 직접 입력 가능)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
       # Agent가 order-service/inventory-service의 로그·자바 소스 코드를 직접 파일로
       # 읽어서 조사하는 구조라, 레포 전체를 그대로 마운트해 둔다 (agent/incident_agent/config.py 참고).
