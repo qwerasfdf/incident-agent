@@ -85,6 +85,7 @@ CONCLUDE_PROMPT = """지금까지의 조사 결과로 원인 보고서를 JSON�
 class AgentState(TypedDict, total=False):
     raw_report: dict
     defects: list
+    defects_multi: list
     frames: list
     symptom: str
     facts: dict
@@ -437,7 +438,9 @@ def build_graph(cfg: AgentConfig, emit: Callable[[dict], Any] = lambda e: None):
                     {"role": "user", "content": ctx + "\n\n" + INVESTIGATE_PROMPT}]
         frames = [fr for g in f["signatures"] if g.get("current", True)
                   for fr in g["sample"].get("app_frames", [])] + call_chain
-        return {"context": ctx, "messages": messages, "tool_log": log, "defects": defects, "frames": frames}
+        defects_multi = _extra_defects_for_multi(f, tools, defects, log, step)
+        return {"context": ctx, "messages": messages, "tool_log": log, "defects": defects,
+                "defects_multi": defects_multi, "frames": frames}
 
     # 3) 추가 조사 (LLM이 도구 선택)
     def investigate(state: AgentState):
@@ -710,7 +713,11 @@ def build_graph(cfg: AgentConfig, emit: Callable[[dict], Any] = lambda e: None):
                 cause = {"cause_type": "외부 시스템", "location": "외부 결제 대행사(PG) API",
                          "evidence": _ext_timeout_evidence(f), "confidence": "보통"}
             else:
-                d = _best_defect(state["defects"], f["observations"], kind)
+                # 단일 원인 판단에 쓰는 state["defects"]뿐 아니라, 복합 탐지 전용으로 추가 읽은
+                # state["defects_multi"]도 같이 본다 (존재하면) — 이쪽은 LLM 컨텍스트에는 없던 거라
+                # 여기서만 추가 원인 후보로 쓰인다.
+                d = _best_defect((state["defects"] + state.get("defects_multi", [])),
+                                f["observations"], kind)
                 if d:
                     ev = _matching_findings(d, kind) if d.get("findings") else list(d.get("findings") or [])
                     cause = {"cause_type": "코드 결함", "location": d["method"], "evidence": ev,
@@ -779,6 +786,33 @@ def _obs_kind(observations):
     if "느림" in t:
         return "slow"
     return None
+
+
+def _extra_defects_for_multi(f, tools, existing_defects, log, emit_step):
+    """복합 장애(시나리오 여러 개 동시) 탐지 전용 — 주 조사 흐름이 LLM에게 보여주는 맥락(ctx/messages)에는
+    전혀 손대지 않고, 힙/DB 커넥션이 독립적으로 높게 관찰되는데 그 코드를 아직 한 번도 안 읽었다면
+    (=주 원인 조사가 다른 에러 위치만 보고 끝나서) 추가로 읽어 defects만 보탠다.
+    이 결과는 state["defects"](단일 원인 판단에 쓰이는 변수)와는 분리된 state["defects_multi"]로만
+    쓰이므로, 기존 단일 시나리오 판단·채점에는 영향이 없다."""
+    have_kinds = {k for d in (existing_defects or []) for k in _defect_kinds(d)}
+    obs_kinds = _obs_kinds(f["observations"])
+    extra = []
+    writes = sorted([r for r in f["requests"] if r["api"].split()[0] in ("POST", "PUT", "PATCH")],
+                    key=lambda r: -r["count"])
+    busiest = sorted(f["requests"], key=lambda r: -r["count"])
+    checks = []
+    if "memory" in obs_kinds and "memory" not in have_kinds and writes:
+        checks.append(("힙 메모리 사용률이 높아 보이는데 아직 안 읽은 쓰기 API 경로", writes[0]["api"]))
+    if "connection" in obs_kinds and "connection" not in have_kinds and busiest:
+        checks.append(("DB 커넥션 사용률이 높아 보이는데 아직 안 읽은 호출 많은 API 경로", busiest[0]["api"]))
+    for why, api in checks:
+        r = tools.read_endpoint_code(api)
+        for c in r.get("chain", []):
+            extra += _defect_methods(c)
+        log.append({"by": "자동(복합탐지)", "tool": "read_endpoint_code", "args": {"api": api}, "result": r})
+        emit_step("tool", f"[복합 장애 탐지] {why}: {api}",
+                  "\n\n".join(c["code"] for c in r.get("chain", [])), tool="read_endpoint_code")
+    return extra
 
 
 def _obs_kinds(observations):
