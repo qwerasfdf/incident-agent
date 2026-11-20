@@ -1029,7 +1029,7 @@ with tab_agent:
                          "키는 이 화면 세션에만 쓰이고 저장되지 않습니다.")
             else:
                 claude_key = ""
-                ollama_url = st.text_input("Ollama 주소", value="http://localhost:11434")
+                ollama_url = st.text_input("Ollama 주소", value=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))
                 models = ollama_models(ollama_url)
                 model = st.selectbox("모델", models or ["qwen2.5:3b"],
                                      index=(models.index("qwen2.5:3b") if "qwen2.5:3b" in models else 0))
