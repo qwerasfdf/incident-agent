@@ -889,16 +889,23 @@ def _ext_timeout_evidence_any(f):
 
 
 def _cfg_change_candidates_for_multi(f):
-    """observe()의 cfg_change 판정과 같은 매칭(설정 변경 메시지 ↔ 오류 내용)을, '현재'·증상 포커스
-    필터 없이, 또한 error_signatures()의 '최근 6개' 제한도 없이(signatures_multi가 있으면 그쪽을)
-    에러 그룹(레벨 ERROR/WARN) 하나하나에 대해 다시 해본다. 증상 포커스와 안 맞거나, 다른 시나리오가
-    오래 돌면서 새 에러 그룹을 많이 만들어내 "최근 6개" 밖으로 밀려난 에러 그룹 앞의 설정 변경도
-    여기서는 후보로 잡힌다 (복합 탐지 전용)."""
+    """observe()의 cfg_change 판정과 비슷한 매칭(설정 변경 메시지 ↔ 오류 내용)을, '현재'·증상 포커스
+    필터 없이, error_signatures()의 '최근 6개' 제한도 없이(signatures_multi가 있으면 그쪽을), 그리고
+    *시간 간격 제한도 없이* 에러 그룹(레벨 ERROR/WARN) 하나하나에 대해 다시 해본다 (복합 탐지 전용).
+
+    observe()는 설정 변경과 오류가 90초 넘게 떨어져 있으면 strict 모드(leaf/값이 오류 문구에 그대로
+    나와야 함)로 전환하는데, 예를 들어 설정값을 잘못된 URL로 바꿔서 404가 나는 경우 그 404 예외
+    메시지에는 URL이 전혀 안 찍히는 형태라 strict 모드에서는 "절대" 못 맞힌다. 그래서 설정을 잘못
+    바꿔둔 채로 몇 시간 뒤에야 그 경로로 요청이 들어와서 에러가 나는(=이미 켜져 있던 다른 시나리오
+    때문에 늦게 분석을 돌린) 경우를 잡으려는 게 이 함수의 목적인데, observe()와 똑같은 90초/5분
+    제한을 그대로 썼다면 애초에 이런 "오래된 설정 + 늦은 요청" 조합을 못 잡는다. 그래서 여기서는
+    시간 제한을 두지 않고(설정 변경이 오류보다 먼저이기만 하면 후보로 보고) 항상 느슨한(strict=False)
+    도메인 키워드 매칭만 쓴다 — 오탐 가능성은 있지만, 주 원인(r)이 아니라 "추가로 확인된 신호"로만
+    보고서에 표시되므로 감내할 만하다 (observe()의 cfg_change 변수·단일 원인 판단은 그대로 둔다)."""
     out = []
     if not f["config_changes"]:
         return out
     sigs = f.get("signatures_multi") or f["signatures"]
-    window_sec = min(300, f["window_min"] * 60)
     seen_msgs = set()
     for g in sigs:
         if g["level"] not in ("ERROR", "WARN"):
@@ -906,9 +913,7 @@ def _cfg_change_candidates_for_multi(f):
         err_text = _err_content_text(g["sample"])
         first_err = g["first"]
         before = [c for c in f["config_changes"] if c["time"] <= first_err
-                  and _secs_between(c["time"], first_err) <= window_sec
-                  and _config_related(c["message"], err_text,
-                                      strict=_secs_between(c["time"], first_err) > 90)]
+                  and _config_related(c["message"], err_text, strict=False)]
         if before:
             c = before[-1]
             if c["message"] not in seen_msgs:
